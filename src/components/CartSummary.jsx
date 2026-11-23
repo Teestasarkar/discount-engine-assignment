@@ -29,7 +29,7 @@ const Tag = ({ label, color, bg }) => (
 )
 
 const COLUMNS = [
-  { key: 'itemId', label: 'Item' },
+  { key: 'itemId', label: 'Item', nowrap: true },
   { key: 'product', label: 'Product' },
   { key: 'basePrice', label: 'Base Price', render: (v) => rupees(v) },
   {

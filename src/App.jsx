@@ -7,13 +7,13 @@
  * the engine automatically once the first calculation has been requested.
  */
 
-import { useMemo, useState } from 'react'
-import CsvUploader from './components/CsvUploader.jsx'
+import { useMemo, useRef, useState } from 'react'
+import FileUploader from './components/FileUploader.jsx'
 import DataTable from './components/DataTable.jsx'
 import ErrorBanner from './components/ErrorBanner.jsx'
 import CartSummary from './components/CartSummary.jsx'
 import NlRuleInput from './components/NlRuleInput.jsx'
-import { parseRulesCSV, parseCartCSV } from './inputs/csv.js'
+import { RULE_FILE_INPUTS, CART_FILE_INPUTS, acceptAttr, readFile } from './inputs/index.js'
 import { calculateCart } from './engine/discountEngine.js'
 import { nextId } from './engine/schema.js'
 
@@ -36,20 +36,28 @@ const rulesColumns = (onRemove) => [
       </span>
     ),
   },
-  { key: 'scope',     label: 'Scope',      render: capitalise },
-  { key: 'appliesTo', label: 'Applies To', render: (v, row) => (row.scope === 'cart' ? 'Entire cart' : v) },
-  { key: 'type',      label: 'Type',       render: capitalise },
+  {
+    key: 'appliesTo',
+    label: 'Applies To',
+    render: (v, row) => (
+      <div>
+        <div>{row.scope === 'cart' ? 'Entire cart' : v}</div>
+        <div style={{ fontSize: 10, color: '#888' }}>{capitalise(row.scope)}</div>
+      </div>
+    ),
+  },
   {
     key: 'value',
-    label: 'Value',
-    render: (v, row) => row.type === 'percentage' ? `${v}% off` : `Rs.${v.toLocaleString('en-IN')} off`,
+    label: 'Offer',
+    nowrap: true,
+    render: (v, row) => (row.type === 'percentage' ? `${v}% off` : `Rs.${v.toLocaleString('en-IN')} off`),
   },
   {
     key: 'minCartValue',
     label: 'Condition',
     render: (v, row) => (row.scope === 'cart' && v > 0 ? `Cart ≥ Rs.${v.toLocaleString('en-IN')}` : '—'),
   },
-  { key: 'stackable', label: 'Stackable',  render: (v) => (v ? 'Yes' : 'No') },
+  { key: 'stackable', label: 'Stacks',     render: (v) => (v ? 'Yes' : 'No') },
   {
     key: 'remove',
     label: '',
@@ -67,11 +75,11 @@ const rulesColumns = (onRemove) => [
 ]
 
 const CART_COLUMNS = [
-  { key: 'itemId',    label: 'Item' },
+  { key: 'itemId',    label: 'Item', nowrap: true },
   { key: 'product',   label: 'Product' },
   { key: 'brand',     label: 'Brand' },
   { key: 'platform',  label: 'Platform' },
-  { key: 'basePrice', label: 'Base Price', render: (v) => `Rs.${v.toLocaleString('en-IN')}` },
+  { key: 'basePrice', label: 'Base Price', nowrap: true, render: (v) => `Rs.${v.toLocaleString('en-IN')}` },
 ]
 
 // ── Styles ───────────────────────────────────────────────────────
@@ -98,15 +106,22 @@ const S = {
   muted: { fontSize: 11, color: '#888', marginBottom: 4 },
 }
 
+function issueTitle(errors, uploadOk, hasExisting, what) {
+  if (uploadOk) return `${errors.length} row${errors.length > 1 ? 's' : ''} skipped — the rest loaded`
+  return hasExisting ? `File not loaded — your current ${what} was kept` : 'File not loaded'
+}
+
 // ── Component ────────────────────────────────────────────────────
 
 export default function App() {
   const [rules, setRules]           = useState([])
   const [rulesErrors, setRulesErr]  = useState([])
+  const [rulesUploadOk, setRulesUploadOk] = useState(true) // did the last rules upload load anything?
   const [rulesFileName, setRulesFileName] = useState('')
 
   const [cartItems, setCartItems]   = useState([])
   const [cartErrors, setCartErrors] = useState([])
+  const [cartUploadOk, setCartUploadOk] = useState(true)
   const [cartFileName, setCartFileName]   = useState('')
 
   // Results appear after the first "Calculate" click and then stay live.
@@ -119,18 +134,35 @@ export default function App() {
 
   // ── Handlers ──
 
-  function handleRulesLoad(csvText, fileName) {
-    const { data, errors } = parseRulesCSV(csvText)
-    setRules(data)
+  // Upload policy (both inputs): a file with at least one valid row replaces
+  // the current set and skipped rows are shown as warnings; a file with no
+  // valid rows leaves the current set untouched and explains why.
+
+  async function handleRulesFile(file) {
+    const { data, errors } = await readFile(RULE_FILE_INPUTS, file)
+    if (data.length > 0) {
+      setRules(data)
+      setRulesFileName(file.name)
+    }
+    setRulesUploadOk(data.length > 0)
     setRulesErr(errors)
-    setRulesFileName(fileName)
   }
 
-  function handleCartLoad(csvText, fileName) {
-    const { data, errors } = parseCartCSV(csvText)
-    setCartItems(data)
+  const [cartBusy, setCartBusy] = useState(false)
+  const latestCartUpload = useRef(0)
+
+  async function handleCartFile(file) {
+    const uploadId = ++latestCartUpload.current
+    setCartBusy(true)
+    const { data, errors } = await readFile(CART_FILE_INPUTS, file)
+    if (uploadId !== latestCartUpload.current) return // a newer upload superseded this one
+    setCartBusy(false)
+    if (data.length > 0) {
+      setCartItems(data)
+      setCartFileName(file.name)
+    }
+    setCartUploadOk(data.length > 0)
     setCartErrors(errors)
-    setCartFileName(fileName)
   }
 
   // Confirmed natural-language rule: add it and show the re-run results.
@@ -166,14 +198,19 @@ export default function App() {
           {/* Rules upload */}
           <div style={S.section}>
             <div style={S.sectionTitle}>Discount Rules</div>
-            <CsvUploader
+            <FileUploader
               label="rules.csv"
               description="Upload your discount rules CSV"
-              onLoad={handleRulesLoad}
+              accept={acceptAttr(RULE_FILE_INPUTS)}
+              onFile={handleRulesFile}
               hasData={rules.length > 0}
               fileName={rulesFileName}
             />
-            <ErrorBanner errors={rulesErrors} />
+            <ErrorBanner
+              errors={rulesErrors}
+              tone={rulesUploadOk ? 'warning' : 'error'}
+              title={issueTitle(rulesErrors, rulesUploadOk, rules.length > 0, 'rules')}
+            />
 
             <div style={{ marginTop: '0.9rem' }}>
               <div style={{ ...S.muted, fontWeight: 700, color: '#131A48' }}>…or describe a rule in plain English</div>
@@ -191,14 +228,20 @@ export default function App() {
           {/* Cart upload */}
           <div style={S.section}>
             <div style={S.sectionTitle}>Cart Items</div>
-            <CsvUploader
-              label="cart.csv"
-              description="Upload your cart CSV"
-              onLoad={handleCartLoad}
+            <FileUploader
+              label="cart.csv or cart.pdf"
+              description="Upload a cart CSV, or a PDF with a Product · Brand · Platform · Base Price table"
+              accept={acceptAttr(CART_FILE_INPUTS)}
+              onFile={handleCartFile}
               hasData={cartItems.length > 0}
               fileName={cartFileName}
+              busy={cartBusy}
             />
-            <ErrorBanner errors={cartErrors} />
+            <ErrorBanner
+              errors={cartErrors}
+              tone={cartUploadOk ? 'warning' : 'error'}
+              title={issueTitle(cartErrors, cartUploadOk, cartItems.length > 0, 'cart')}
+            />
             {cartItems.length > 0 && (
               <div style={{ marginTop: '0.75rem' }}>
                 <div style={S.muted}>{cartItems.length} item{cartItems.length > 1 ? 's' : ''} loaded</div>

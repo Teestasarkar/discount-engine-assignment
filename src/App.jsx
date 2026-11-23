@@ -1,28 +1,38 @@
 /**
  * App.jsx
  *
- * Top-level component. Manages state for rules, cart items, and results.
- * Wires together CSV upload → parse → engine → display.
+ * Top-level component. Holds the session state (rules + cart) and wires the
+ * input adapters to the engine and the results view. Results are derived from
+ * the current rules and cart, so any change (a new rule, a new cart) re-runs
+ * the engine automatically once the first calculation has been requested.
  */
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import CsvUploader from './components/CsvUploader.jsx'
 import DataTable from './components/DataTable.jsx'
 import ErrorBanner from './components/ErrorBanner.jsx'
-import { parseRulesCSV, parseCartCSV } from './engine/csvParser.js'
-import { processCart, cartTotal } from './engine/discountEngine.js'
+import CartSummary from './components/CartSummary.jsx'
+import { parseRulesCSV, parseCartCSV } from './inputs/csv.js'
+import { calculateCart } from './engine/discountEngine.js'
 
 // ── Column definitions ───────────────────────────────────────────
 
+const capitalise = (v) => v.charAt(0).toUpperCase() + v.slice(1)
+
 const RULES_COLUMNS = [
   { key: 'ruleId',    label: 'Rule ID' },
-  { key: 'scope',     label: 'Scope',      render: (v) => v.charAt(0).toUpperCase() + v.slice(1) },
-  { key: 'appliesTo', label: 'Applies To' },
-  { key: 'type',      label: 'Type',       render: (v) => v.charAt(0).toUpperCase() + v.slice(1) },
+  { key: 'scope',     label: 'Scope',      render: capitalise },
+  { key: 'appliesTo', label: 'Applies To', render: (v, row) => (row.scope === 'cart' ? 'Entire cart' : v) },
+  { key: 'type',      label: 'Type',       render: capitalise },
   {
     key: 'value',
     label: 'Value',
-    render: (v, row) => row.type === 'percentage' ? `${v}% off` : `Rs.${v} off`,
+    render: (v, row) => row.type === 'percentage' ? `${v}% off` : `Rs.${v.toLocaleString('en-IN')} off`,
+  },
+  {
+    key: 'minCartValue',
+    label: 'Condition',
+    render: (v, row) => (row.scope === 'cart' && v > 0 ? `Cart ≥ Rs.${v.toLocaleString('en-IN')}` : '—'),
   },
   { key: 'stackable', label: 'Stackable',  render: (v) => (v ? 'Yes' : 'No') },
 ]
@@ -35,38 +45,6 @@ const CART_COLUMNS = [
   { key: 'basePrice', label: 'Base Price', render: (v) => `Rs.${v.toLocaleString('en-IN')}` },
 ]
 
-const RESULTS_COLUMNS = [
-  { key: 'itemId',    label: 'Item' },
-  { key: 'product',   label: 'Product' },
-  { key: 'basePrice', label: 'Base Price',  render: (v) => `Rs.${v.toLocaleString('en-IN')}` },
-  { key: 'finalPrice',label: 'Final Price',
-    render: (v, row) => (
-      <span style={{ fontWeight: 700, color: row.totalDiscount > 0 ? '#1e5c2c' : '#131A48' }}>
-        Rs.{v.toLocaleString('en-IN')}
-      </span>
-    ),
-  },
-  {
-    key: 'totalDiscount',
-    label: 'You Save',
-    render: (v) =>
-      v > 0 ? (
-        <span style={{ color: '#1e5c2c', fontWeight: 600 }}>Rs.{v.toLocaleString('en-IN')}</span>
-      ) : (
-        <span style={{ color: '#888' }}>—</span>
-      ),
-  },
-  {
-    key: 'reasoning',
-    label: 'Offer Applied',
-    render: (v) => (
-      <span style={{ color: v === 'No offers available' ? '#888' : '#131A48', fontStyle: v === 'No offers available' ? 'italic' : 'normal' }}>
-        {v}
-      </span>
-    ),
-  },
-]
-
 // ── Styles ───────────────────────────────────────────────────────
 
 const S = {
@@ -75,10 +53,9 @@ const S = {
   logoTxt: { fontFamily: 'Georgia, serif', fontSize: 17, fontWeight: 700, color: '#fff', letterSpacing: '-0.02em' },
   logoSpan:{ color: '#FF5800' },
   headerSub: { fontSize: 11, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.07em' },
-  main:    { maxWidth: 960, margin: '0 auto', padding: '1.8rem 1.5rem' },
-  section: { background: '#fff', border: '1px solid #CECECE', borderRadius: 6, padding: '1.2rem 1.4rem', marginBottom: '1.2rem' },
+  main:    { maxWidth: 1040, margin: '0 auto', padding: '1.8rem 1.5rem' },
+  section: { background: '#fff', border: '1px solid #CECECE', borderRadius: 6, padding: '1.2rem 1.4rem', marginBottom: '1.2rem', minWidth: 0 },
   sectionTitle: { fontFamily: 'Georgia, serif', fontWeight: 700, fontSize: 14, color: '#131A48', marginBottom: '0.7rem', paddingBottom: 6, borderBottom: '2px solid #FF5800', display: 'inline-block' },
-  grid2:   { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' },
   btn:     {
     background: '#FF5800', color: '#fff', border: 'none', borderRadius: 4,
     padding: '0.65rem 2rem', fontSize: 13, fontWeight: 700, cursor: 'pointer',
@@ -89,17 +66,7 @@ const S = {
     padding: '0.65rem 2rem', fontSize: 13, fontWeight: 700, cursor: 'not-allowed',
     letterSpacing: '0.04em', textTransform: 'uppercase',
   },
-  totalRow: {
-    display: 'flex', justifyContent: 'flex-end', alignItems: 'center',
-    gap: '1rem', marginTop: '0.75rem', paddingTop: '0.75rem',
-    borderTop: '2px solid #131A48',
-  },
-  totalLabel: { fontWeight: 700, fontSize: 14, color: '#131A48' },
-  totalValue: { fontWeight: 700, fontSize: 16, color: '#131A48' },
-  tag: (color, bg) => ({
-    display: 'inline-block', fontSize: 10, fontWeight: 700, padding: '1px 6px',
-    borderRadius: 20, background: bg, color, textTransform: 'uppercase', letterSpacing: '0.04em',
-  }),
+  muted: { fontSize: 11, color: '#888', marginBottom: 4 },
 }
 
 // ── Component ────────────────────────────────────────────────────
@@ -113,7 +80,13 @@ export default function App() {
   const [cartErrors, setCartErrors] = useState([])
   const [cartFileName, setCartFileName]   = useState('')
 
-  const [results, setResults]       = useState(null)
+  // Results appear after the first "Calculate" click and then stay live.
+  const [showResults, setShowResults] = useState(false)
+
+  const summary = useMemo(
+    () => (showResults ? calculateCart(cartItems, rules) : null),
+    [showResults, cartItems, rules]
+  )
 
   // ── Handlers ──
 
@@ -122,7 +95,6 @@ export default function App() {
     setRules(data)
     setRulesErr(errors)
     setRulesFileName(fileName)
-    setResults(null) // clear stale results
   }
 
   function handleCartLoad(csvText, fileName) {
@@ -130,12 +102,6 @@ export default function App() {
     setCartItems(data)
     setCartErrors(errors)
     setCartFileName(fileName)
-    setResults(null)
-  }
-
-  function handleCalculate() {
-    const res = processCart(cartItems, rules)
-    setResults(res)
   }
 
   const canCalculate = rules.length > 0 && cartItems.length > 0
@@ -153,7 +119,7 @@ export default function App() {
       <div style={S.main}>
 
         {/* Upload row */}
-        <div style={S.grid2}>
+        <div className="grid2">
           {/* Rules upload */}
           <div style={S.section}>
             <div style={S.sectionTitle}>Discount Rules</div>
@@ -167,9 +133,7 @@ export default function App() {
             <ErrorBanner errors={rulesErrors} />
             {rules.length > 0 && (
               <div style={{ marginTop: '0.75rem' }}>
-                <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>
-                  {rules.length} rule{rules.length > 1 ? 's' : ''} loaded
-                </div>
+                <div style={S.muted}>{rules.length} rule{rules.length > 1 ? 's' : ''} active</div>
                 <DataTable columns={RULES_COLUMNS} rows={rules} />
               </div>
             )}
@@ -188,9 +152,7 @@ export default function App() {
             <ErrorBanner errors={cartErrors} />
             {cartItems.length > 0 && (
               <div style={{ marginTop: '0.75rem' }}>
-                <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>
-                  {cartItems.length} item{cartItems.length > 1 ? 's' : ''} loaded
-                </div>
+                <div style={S.muted}>{cartItems.length} item{cartItems.length > 1 ? 's' : ''} loaded</div>
                 <DataTable columns={CART_COLUMNS} rows={cartItems} />
               </div>
             )}
@@ -198,30 +160,28 @@ export default function App() {
         </div>
 
         {/* Calculate button */}
-        <div style={{ textAlign: 'center', marginBottom: '1.2rem' }}>
-          <button
-            style={canCalculate ? S.btn : S.btnDisabled}
-            onClick={handleCalculate}
-            disabled={!canCalculate}
-          >
-            Calculate Discounts
-          </button>
-          {!canCalculate && (
-            <div style={{ fontSize: 11, color: '#888', marginTop: 6 }}>
-              Upload both files to calculate
-            </div>
-          )}
-        </div>
+        {!summary && (
+          <div style={{ textAlign: 'center', marginBottom: '1.2rem' }}>
+            <button
+              style={canCalculate ? S.btn : S.btnDisabled}
+              onClick={() => setShowResults(true)}
+              disabled={!canCalculate}
+            >
+              Calculate Discounts
+            </button>
+            {!canCalculate && (
+              <div style={{ fontSize: 11, color: '#888', marginTop: 6 }}>
+                Load rules and a cart to calculate
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Results */}
-        {results && (
+        {summary && (
           <div style={S.section}>
             <div style={S.sectionTitle}>Cart Summary</div>
-            <DataTable columns={RESULTS_COLUMNS} rows={results} />
-            <div style={S.totalRow}>
-              <span style={S.totalLabel}>Cart Total</span>
-              <span style={S.totalValue}>Rs.{cartTotal(results).toLocaleString('en-IN')}</span>
-            </div>
+            <CartSummary summary={summary} />
           </div>
         )}
 

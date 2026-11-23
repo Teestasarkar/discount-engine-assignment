@@ -12,15 +12,30 @@ import CsvUploader from './components/CsvUploader.jsx'
 import DataTable from './components/DataTable.jsx'
 import ErrorBanner from './components/ErrorBanner.jsx'
 import CartSummary from './components/CartSummary.jsx'
+import NlRuleInput from './components/NlRuleInput.jsx'
 import { parseRulesCSV, parseCartCSV } from './inputs/csv.js'
 import { calculateCart } from './engine/discountEngine.js'
+import { nextId } from './engine/schema.js'
 
 // ── Column definitions ───────────────────────────────────────────
 
 const capitalise = (v) => v.charAt(0).toUpperCase() + v.slice(1)
 
-const RULES_COLUMNS = [
-  { key: 'ruleId',    label: 'Rule ID' },
+const rulesColumns = (onRemove) => [
+  {
+    key: 'ruleId',
+    label: 'Rule ID',
+    render: (v, row) => (
+      <span style={{ whiteSpace: 'nowrap' }} title={row.sourceText ? `Added from: “${row.sourceText}”` : undefined}>
+        {v}
+        {row.source === 'ai' && (
+          <span style={{ marginLeft: 5, fontSize: 9, fontWeight: 700, color: '#1a3d8f', background: '#e6edff', borderRadius: 10, padding: '1px 5px' }}>
+            AI
+          </span>
+        )}
+      </span>
+    ),
+  },
   { key: 'scope',     label: 'Scope',      render: capitalise },
   { key: 'appliesTo', label: 'Applies To', render: (v, row) => (row.scope === 'cart' ? 'Entire cart' : v) },
   { key: 'type',      label: 'Type',       render: capitalise },
@@ -35,6 +50,20 @@ const RULES_COLUMNS = [
     render: (v, row) => (row.scope === 'cart' && v > 0 ? `Cart ≥ Rs.${v.toLocaleString('en-IN')}` : '—'),
   },
   { key: 'stackable', label: 'Stackable',  render: (v) => (v ? 'Yes' : 'No') },
+  {
+    key: 'remove',
+    label: '',
+    render: (_, row) => (
+      <button
+        onClick={() => onRemove(row.ruleId)}
+        title={`Remove ${row.ruleId}`}
+        aria-label={`Remove ${row.ruleId}`}
+        style={{ border: 'none', background: 'none', color: '#999', cursor: 'pointer', fontSize: 14, padding: 0 }}
+      >
+        ×
+      </button>
+    ),
+  },
 ]
 
 const CART_COLUMNS = [
@@ -104,6 +133,20 @@ export default function App() {
     setCartFileName(fileName)
   }
 
+  // Confirmed natural-language rule: add it and show the re-run results.
+  function handleAddRule(rule) {
+    setRules((prev) => {
+      const ids = prev.map((r) => r.ruleId)
+      const ruleId = ids.includes(rule.ruleId) ? nextId(ids, 'RULE') : rule.ruleId
+      return [...prev, { ...rule, ruleId }]
+    })
+    if (cartItems.length > 0) setShowResults(true)
+  }
+
+  function handleRemoveRule(ruleId) {
+    setRules((prev) => prev.filter((r) => r.ruleId !== ruleId))
+  }
+
   const canCalculate = rules.length > 0 && cartItems.length > 0
 
   // ── Render ──
@@ -131,10 +174,16 @@ export default function App() {
               fileName={rulesFileName}
             />
             <ErrorBanner errors={rulesErrors} />
+
+            <div style={{ marginTop: '0.9rem' }}>
+              <div style={{ ...S.muted, fontWeight: 700, color: '#131A48' }}>…or describe a rule in plain English</div>
+              <NlRuleInput rules={rules} cartItems={cartItems} onAddRule={handleAddRule} />
+            </div>
+
             {rules.length > 0 && (
-              <div style={{ marginTop: '0.75rem' }}>
+              <div style={{ marginTop: '0.9rem' }}>
                 <div style={S.muted}>{rules.length} rule{rules.length > 1 ? 's' : ''} active</div>
-                <DataTable columns={RULES_COLUMNS} rows={rules} />
+                <DataTable columns={rulesColumns(handleRemoveRule)} rows={rules} />
               </div>
             )}
           </div>

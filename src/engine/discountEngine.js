@@ -131,7 +131,13 @@ export function applyDiscounts(item, rules) {
 
   const reasoningParts = []
   if (winner) {
-    const beaten = skipped.map(describeRule).join(', ')
+    // Only rules that saved less were beaten. A tie (for example a duplicate
+    // rule) is not worth a "better than" comparison.
+    const winnerSaving = calculateDiscountAmount(item.basePrice, winner)
+    const beaten = skipped
+      .filter((r) => calculateDiscountAmount(item.basePrice, r) < winnerSaving)
+      .map(describeRule)
+      .join(', ')
     reasoningParts.push(beaten ? `${describeRule(winner)} (better than ${beaten})` : describeRule(winner))
   }
   for (const rule of stacked) reasoningParts.push(describeRule(rule))

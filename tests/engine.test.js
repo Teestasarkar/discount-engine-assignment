@@ -51,6 +51,14 @@ describe('expected results from the brief', () => {
     )
   })
 
+  it('does not call a tie "better than" (e.g. a duplicate of RULE-01 is added)', () => {
+    const duplicate = { ...RULES[0], ruleId: 'RULE-05' }
+    const results = calculateCart(CART, [...RULES, duplicate]).items
+    expect(results[0].reasoning).toBe('Platform offer: 15% off (better than Brand offer: Rs.150 off)')
+    expect(results[2].reasoning).toBe('Platform offer: 15% off')
+    expect(results[0].finalPrice).toBe(1104)
+  })
+
   it('stacks ITEM-02 and says so', () => {
     expect(byId['ITEM-02'].reasoning).toBe('Brand offer: Rs.150 off + Platform offer: 10% off')
   })

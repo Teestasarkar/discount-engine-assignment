@@ -13,7 +13,7 @@ npm run dev        # → http://localhost:5173
 
 Everything works without configuration except the plain-English rule input. To enable it, put `GROQ_API_KEY=…` in `.env.local` before step 2 (see `.env.example`). A free key from [the Groq console](https://console.groq.com/keys) works, or set `ANTHROPIC_API_KEY=…` to use Claude instead. Without a key, that input shows a clear "not configured" message and the rest of the app is unaffected.
 
-`npm test` runs 114 tests: the brief's expected-results table, threshold edge cases, LLM-output validation, and real PDFs parsed through pdf.js.
+`npm test` runs 115 tests: the brief's expected-results table, threshold edge cases, LLM-output validation, and real PDFs parsed through pdf.js.
 
 ## Try it
 

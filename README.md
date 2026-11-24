@@ -2,7 +2,7 @@
 
 Cart pricing engine for the Opptra FDE Intern assignment. It finds the best offer for each item, stacks rules marked stackable, applies cart-level offers, and explains every price in plain language. Rules can come from a CSV or from plain English (parsed by an LLM). Carts can come from a CSV or a PDF.
 
-**Live:** _LIVE_URL_PLACEHOLDER_
+**Live:** https://discount-engine-assignment-tawny.vercel.app
 
 ## Run locally
 

@@ -1,9 +1,9 @@
 /**
  * nlRule.js — natural-language rule input adapter
  *
- *   text ──► POST /api/parse-rule (Claude) ──► interpretParsedRule ──► schema.validateRule ──► DiscountRule
+ *   text ──► POST /api/parse-rule (LLM) ──► interpretParsedRule ──► schema.validateRule ──► DiscountRule
  *
- * Claude only proposes a reading of the sentence. Nothing it returns reaches
+ * The LLM only proposes a reading of the sentence. Nothing it returns reaches
  * the engine until it has passed validateRule (the same gate as CSV rows) and
  * the user has confirmed it in the UI.
  */
@@ -11,7 +11,7 @@
 import { validateRule, nextId } from '../engine/schema.js'
 
 /**
- * Calls the parse endpoint. Resolves to Claude's parsed object, or throws an
+ * Calls the parse endpoint. Resolves to the LLM's parsed object, or throws an
  * Error whose message is safe to show the user.
  */
 export async function requestRuleParse(text, { knownBrands = [], knownPlatforms = [] } = {}, { signal } = {}) {
@@ -70,13 +70,13 @@ function sameRule(a, b) {
 }
 
 /**
- * Turns Claude's parsed object into something the UI can act on.
+ * Turns the LLM's parsed object into something the UI can act on.
  *
  * Returns one of:
  *   { kind: 'ready', rule, assumptions, warnings }       → show the confirmation step
  *   { kind: 'clarify', message }                         → ask the user to be more specific
  *   { kind: 'unsupported', message }                     → the engine can't express this rule
- *   { kind: 'invalid', errors }                          → Claude said "ok" but the rule doesn't validate
+ *   { kind: 'invalid', errors }                          → the LLM said "ok" but the rule doesn't validate
  *
  * context: { rules: DiscountRule[], cartItems: CartItem[] }
  */

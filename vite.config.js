@@ -26,10 +26,10 @@ function localApi() {
 }
 
 export default defineConfig(({ mode }) => {
-  // Make ANTHROPIC_API_KEY from .env / .env.local visible to the api handler.
+  // Make the LLM keys from .env / .env.local visible to the api handler.
   const env = loadEnv(mode, process.cwd(), '')
-  if (env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
-    process.env.ANTHROPIC_API_KEY = env.ANTHROPIC_API_KEY
+  for (const name of ['ANTHROPIC_API_KEY', 'GROQ_API_KEY', 'GROQ_MODEL']) {
+    if (env[name] && !process.env[name]) process.env[name] = env[name]
   }
 
   return {

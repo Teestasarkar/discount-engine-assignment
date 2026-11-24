@@ -1,8 +1,8 @@
 /**
  * NlRuleInput.jsx
  *
- * "Describe a rule in plain English" → parsed by Claude → confirmation step →
- * onAddRule(rule). Shows the parsed fields, Claude's assumptions, warnings
+ * "Describe a rule in plain English" → parsed by an LLM → confirmation step →
+ * onAddRule(rule). Shows the parsed fields, the LLM's assumptions, warnings
  * and the effect on the current cart before anything is added.
  */
 

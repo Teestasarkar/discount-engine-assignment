@@ -4,13 +4,16 @@
  * Body:     { text: string, knownBrands?: string[], knownPlatforms?: string[] }
  * Response: { ok: true, parsed, model } | { ok: false, error, message }
  *
- * A server exists only to keep ANTHROPIC_API_KEY out of the browser bundle;
- * all pricing and rule validation stay client-side. Runs as a Vercel
+ * A server exists only to keep the LLM API key out of the browser bundle;
+ * all pricing and rule validation stay client-side. The LLM is Claude when
+ * ANTHROPIC_API_KEY is set, otherwise Groq (GROQ_API_KEY, free tier);
+ * see _lib/pickParser.js. Runs as a Vercel
  * function in production and through the Vite dev middleware locally
  * (see vite.config.js), so it sticks to plain Node req/res.
  */
 
-import { readRequest, parseRuleWithClaude, RuleParserError, MODEL } from './_lib/ruleParser.js'
+import { readRequest, RuleParserError } from './_lib/ruleParser.js'
+import { pickParser } from './_lib/pickParser.js'
 
 function send(res, status, payload) {
   res.statusCode = status
@@ -47,17 +50,18 @@ export default async function handler(req, res) {
   const { input, error } = readRequest(body)
   if (error) return send(res, 400, { ok: false, error: 'BAD_REQUEST', message: error })
 
-  if (!process.env.ANTHROPIC_API_KEY) {
+  const parser = pickParser()
+  if (!parser) {
     return send(res, 503, {
       ok: false,
       error: 'LLM_NOT_CONFIGURED',
-      message: 'Natural-language rules are off: ANTHROPIC_API_KEY is not set on the server.',
+      message: 'Natural-language rules are off: set GROQ_API_KEY or ANTHROPIC_API_KEY on the server.',
     })
   }
 
   try {
-    const parsed = await parseRuleWithClaude(input)
-    return send(res, 200, { ok: true, parsed, model: MODEL })
+    const parsed = await parser.parse(input)
+    return send(res, 200, { ok: true, parsed, model: parser.model })
   } catch (err) {
     if (err instanceof RuleParserError) {
       return send(res, err.status, { ok: false, error: err.code, message: err.message })

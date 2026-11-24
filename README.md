@@ -11,9 +11,9 @@ npm install
 npm run dev        # → http://localhost:5173
 ```
 
-Everything works without configuration except the plain-English rule input. To enable it, put `ANTHROPIC_API_KEY=…` in `.env.local` before step 2 (see `.env.example`). Without the key, that input shows a clear "not configured" message and the rest of the app is unaffected.
+Everything works without configuration except the plain-English rule input. To enable it, put `GROQ_API_KEY=…` in `.env.local` before step 2 (see `.env.example`). A free key from [the Groq console](https://console.groq.com/keys) works, or set `ANTHROPIC_API_KEY=…` to use Claude instead. Without a key, that input shows a clear "not configured" message and the rest of the app is unaffected.
 
-`npm test` runs 93 tests: the brief's expected-results table, threshold edge cases, LLM-output validation, and real PDFs parsed through pdf.js.
+`npm test` runs 114 tests: the brief's expected-results table, threshold edge cases, LLM-output validation, and real PDFs parsed through pdf.js.
 
 ## Try it
 
@@ -39,8 +39,10 @@ src/
     nlRule.js              sentence → /api/parse-rule → validated DiscountRule
   components/              React UI (CartSummary, NlRuleInput, FileUploader, …)
 api/
-  parse-rule.js            serverless function: holds the API key, calls Claude
-  _lib/ruleParser.js       prompt, JSON schema, error mapping
+  parse-rule.js            serverless function: holds the API key, calls the LLM
+  _lib/ruleParser.js       prompt, JSON schema, error codes, the Claude call
+  _lib/groqParser.js       the same request through Groq's REST API
+  _lib/pickParser.js       picks the provider from whichever key is set
 tests/                     vitest
 ```
 
@@ -54,16 +56,18 @@ tests/                     vitest
 
 ## Decisions and tradeoffs
 
-**I added a small server, although the brief says to add one only if PDF parsing needs it.** The LLM key must not ship in a static bundle, where anyone could extract it. `api/parse-rule.js` is the smallest server that avoids that: it receives the sentence and returns Claude's structured reading. All pricing and validation stay in the browser. The alternative, asking each user to paste their own key, works without a server but makes the feature unusable for most people opening the demo. PDF parsing needed no server: it runs client-side with pdf.js, which is lazy-loaded only when a PDF is uploaded.
+**I added a small server, although the brief says to add one only if PDF parsing needs it.** The LLM key must not ship in a static bundle, where anyone could extract it. `api/parse-rule.js` is the smallest server that avoids that: it receives the sentence and returns the LLM's structured reading. All pricing and validation stay in the browser. The alternative, asking each user to paste their own key, works without a server but makes the feature unusable for most people opening the demo. PDF parsing needed no server: it runs client-side with pdf.js, which is lazy-loaded only when a PDF is uploaded.
 
-**The LLM is never trusted.** Claude (Opus 5.5) answers in a fixed JSON schema with `status: ok | ambiguous | unsupported`, the parsed fields, and the assumptions it made. The browser then runs that answer through the same `validateRule` as CSV rows:
-- A rule Claude calls "ok" that is invalid (150% off, a zero value, a brand rule with no brand) is rejected, with the reasons shown.
+**The LLM is never trusted.** It answers in a fixed JSON schema with `status: ok | ambiguous | unsupported`, the parsed fields, and the assumptions it made. The browser then runs that answer through the same `validateRule` as CSV rows:
+- A rule the LLM calls "ok" that is invalid (150% off, a zero value, a brand rule with no brand) is rejected, with the reasons shown.
 - A cart threshold attached to a brand or platform rule is **rejected**, not dropped. Dropping it would silently make a conditional offer unconditional.
-- "Give a discount for big orders" comes back `ambiguous` with a specific question ("how much, and what counts as big?"), and nothing is added.
+- "Give a discount for big orders" comes back `ambiguous` with a specific question (in testing: *"What is the discount amount and the minimum cart value for a big order?"*), and nothing is added.
 - Things the engine can't express (buy-one-get-one, date windows, brand + platform combinations) come back `unsupported`, with the closest rule that would work.
 - Refusals, truncated output, invalid JSON, rate limits, timeouts and a missing or invalid key each produce a specific message instead of a crash.
 
-**The confirmation step shows consequences, not just fields.** Besides scope, value and so on, it shows Claude's assumptions (for example "'more than Rs.5,000' treated as ≥ Rs.5,000" or "not stated as stackable, so it doesn't stack"), warnings (the rule matches nothing in the current cart; it duplicates RULE-02), and the before → after cart total. *Alternative I'd propose:* make the parsed fields editable in that card, so fixing a misread value doesn't need another LLM round trip. I kept plain confirm/discard to match the brief, and because rephrasing is cheap.
+**Which LLM.** The live demo uses `openai/gpt-oss-120b` on Groq's free tier, so it costs nothing to run. I picked it because it's Groq's strongest production text model with *strict* structured outputs (decoding is constrained to the JSON schema, so the reply always has the right shape) and the free tier allows 1,000 requests a day. The same endpoint uses Claude (Opus 5.5) instead when `ANTHROPIC_API_KEY` is set. Both get the same prompt and schema, return the same error codes, and their answers pass the same `validateRule` check, so switching provider is one environment variable and nothing in the browser changes. The free tier's tight limit is about 8,000 tokens a minute (roughly five rule parses), so the server waits out a short `retry-after` once before reporting "busy"; when the daily quota is gone, the input says so and the rest of the app keeps working. In production I'd use a paid tier and add per-IP rate limiting.
+
+**The confirmation step shows consequences, not just fields.** Besides scope, value and so on, it shows the assumptions the LLM reports (for example that "more than Rs.5,000" is treated as inclusive, or that "amazon" means the known platform "Amazon India"), warnings (the rule matches nothing in the current cart; it duplicates RULE-02), and the before → after cart total. The assumption list is best-effort: the model doesn't flag every default it picks. That's why the card always shows every field, Stackable included, instead of relying on the list. *Alternative I'd propose:* make the parsed fields editable in that card, so fixing a misread value doesn't need another LLM round trip. I kept plain confirm/discard to match the brief, and because rephrasing is cheap.
 
 **"More than Rs.5,000" vs `>=`.** The brief's example parses "more than Rs.5,000" as a Rs.5,000 minimum, while the engine applies cart rules at `>=`, so the Rs.5,000.00 boundary differs by one rupee from the literal English. I followed the brief and surface it as an assumption in the confirmation card, so the merchant sees it before adding the rule.
 
@@ -82,4 +86,4 @@ tests/                     vitest
 
 ## Deploying
 
-Deployed on Vercel, which auto-detects Vite and builds to `dist/`. `api/parse-rule.js` becomes a serverless function automatically. Set `ANTHROPIC_API_KEY` in the Vercel project's environment variables.
+Deployed on Vercel, which auto-detects Vite and builds to `dist/`. `api/parse-rule.js` becomes a serverless function automatically. Set `GROQ_API_KEY` (or `ANTHROPIC_API_KEY`) in the Vercel project's environment variables.

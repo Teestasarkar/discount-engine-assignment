@@ -4,6 +4,8 @@ Cart pricing engine for the Opptra FDE Intern assignment. It finds the best offe
 
 **Live:** https://discount-engine-assignment-tawny.vercel.app
 
+**Walkthrough (Loom, recorded on the live site):** https://www.loom.com/share/ec6ec37972ed4726a9df08416928611d
+
 ## Run locally
 
 ```bash
